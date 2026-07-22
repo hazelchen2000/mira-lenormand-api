@@ -141,11 +141,11 @@ def generate_interpretation(session: dict, cards: list[dict]) -> dict:
     try:
         client = OpenAI(
             api_key=api_key,
-            base_url="https://api.hunyuan.cloud.tencent.com/v1",
+            base_url="https://tokenhub.tencentmaas.com/v1",
         )
 
         completion = client.chat.completions.create(
-            model="hunyuan-turbos-latest",
+            model="hy3",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
