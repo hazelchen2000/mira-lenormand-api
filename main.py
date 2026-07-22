@@ -1,61 +1,73 @@
+import json
+import os
 import secrets
-import random
+from random import SystemRandom
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAI
 from pydantic import BaseModel
+
 
 app = FastAPI(title="Mira Lenormand API")
 
-# 当前为前后端联调阶段，先允许网页调用。
-# 正式上线后，会替换为你的前端网址。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 测试阶段；正式上线时再改为你的前端域名
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+rng = SystemRandom()
+sessions = {}
+
 CARDS = [
-    {"number": 1, "name": "骑士", "symbol": "♞", "keyword": "消息、推进、到来"},
-    {"number": 2, "name": "三叶草", "symbol": "☘", "keyword": "机会、短暂、轻盈"},
-    {"number": 3, "name": "船", "symbol": "⛵", "keyword": "远行、推进、变化"},
-    {"number": 4, "name": "房屋", "symbol": "⌂", "keyword": "稳定、家庭、边界"},
+    {"number": 1, "name": "骑士", "symbol": "♞", "keyword": "消息、行动、到来"},
+    {"number": 2, "name": "三叶草", "symbol": "♣", "keyword": "机会、短暂、轻盈"},
+    {"number": 3, "name": "船", "symbol": "⛵", "keyword": "距离、探索、变化"},
+    {"number": 4, "name": "房子", "symbol": "⌂", "keyword": "家庭、稳定、安全感"},
     {"number": 5, "name": "树", "symbol": "♧", "keyword": "成长、根基、耐心"},
-    {"number": 6, "name": "云", "symbol": "☁", "keyword": "不明、摇摆、遮蔽"},
-    {"number": 7, "name": "蛇", "symbol": "〰", "keyword": "复杂、绕路、策略"},
-    {"number": 8, "name": "棺材", "symbol": "▭", "keyword": "结束、停滞、转折"},
-    {"number": 9, "name": "花束", "symbol": "✿", "keyword": "好意、礼物、缓和"},
-    {"number": 10, "name": "镰刀", "symbol": "⌒", "keyword": "切断、突然、决断"},
-    {"number": 11, "name": "鞭", "symbol": "⌁", "keyword": "争执、反复、压力"},
-    {"number": 12, "name": "鸟", "symbol": "◜", "keyword": "沟通、焦虑、讨论"},
-    {"number": 13, "name": "孩童", "symbol": "◌", "keyword": "新事物、起步"},
-    {"number": 14, "name": "狐狸", "symbol": "◇", "keyword": "策略、谨慎、伪装"},
+    {"number": 6, "name": "云", "symbol": "☁", "keyword": "困惑、不确定、遮蔽"},
+    {"number": 7, "name": "蛇", "symbol": "♠", "keyword": "复杂、迂回、欲望"},
+    {"number": 8, "name": "棺材", "symbol": "▰", "keyword": "结束、停滞、转化"},
+    {"number": 9, "name": "花束", "symbol": "✿", "keyword": "喜悦、礼物、吸引"},
+    {"number": 10, "name": "镰刀", "symbol": "⚔", "keyword": "突然、决定、切断"},
+    {"number": 11, "name": "鞭", "symbol": "〰", "keyword": "争执、反复、压力"},
+    {"number": 12, "name": "鸟", "symbol": "♬", "keyword": "交流、焦虑、对话"},
+    {"number": 13, "name": "孩子", "symbol": "◌", "keyword": "开始、单纯、新鲜感"},
+    {"number": 14, "name": "狐狸", "symbol": "♜", "keyword": "谨慎、策略、观察"},
     {"number": 15, "name": "熊", "symbol": "⬟", "keyword": "力量、资源、掌控"},
-    {"number": 16, "name": "星星", "symbol": "✦", "keyword": "希望、指引、远景"},
-    {"number": 17, "name": "鹳", "symbol": "⌁", "keyword": "迁移、改善、变化"},
-    {"number": 18, "name": "狗", "symbol": "●", "keyword": "忠诚、朋友、支持"},
-    {"number": 19, "name": "塔", "symbol": "▥", "keyword": "距离、制度、隔离"},
+    {"number": 16, "name": "星星", "symbol": "✦", "keyword": "希望、指引、愿景"},
+    {"number": 17, "name": "鹳", "symbol": "🕊", "keyword": "改变、更新、迁移"},
+    {"number": 18, "name": "狗", "symbol": "🐕", "keyword": "朋友、信任、支持"},
+    {"number": 19, "name": "塔", "symbol": "♜", "keyword": "距离、边界、独处"},
     {"number": 20, "name": "花园", "symbol": "✾", "keyword": "社交、公开、群体"},
-    {"number": 21, "name": "山", "symbol": "△", "keyword": "阻碍、延迟、困难"},
-    {"number": 22, "name": "道路", "symbol": "⌯", "keyword": "选择、分岔、路径"},
-    {"number": 23, "name": "老鼠", "symbol": "…", "keyword": "消耗、焦虑、流失"},
-    {"number": 24, "name": "心", "symbol": "♥", "keyword": "情感、喜欢、真心"},
-    {"number": 25, "name": "指环", "symbol": "○", "keyword": "承诺、关系、循环"},
+    {"number": 21, "name": "山", "symbol": "▲", "keyword": "阻碍、延迟、坚持"},
+    {"number": 22, "name": "道路", "symbol": "↔", "keyword": "选择、分岔、路径"},
+    {"number": 23, "name": "老鼠", "symbol": "⌁", "keyword": "消耗、焦虑、流失"},
+    {"number": 24, "name": "心", "symbol": "♥", "keyword": "爱、情感、真心"},
+    {"number": 25, "name": "戒指", "symbol": "◯", "keyword": "关系、承诺、循环"},
     {"number": 26, "name": "书", "symbol": "▤", "keyword": "未知、秘密、学习"},
-    {"number": 27, "name": "信", "symbol": "✉", "keyword": "文本、通知、结果"},
-    {"number": 28, "name": "男人", "symbol": "♂", "keyword": "主动方、当事人"},
-    {"number": 29, "name": "女人", "symbol": "♀", "keyword": "接收方、当事人"},
-    {"number": 30, "name": "百合", "symbol": "⚜", "keyword": "成熟、平静、长期"},
-    {"number": 31, "name": "太阳", "symbol": "☉", "keyword": "成功、清晰、能量"},
-    {"number": 32, "name": "月亮", "symbol": "☾", "keyword": "情绪、感受、名望"},
-    {"number": 33, "name": "钥匙", "symbol": "⚿", "keyword": "关键、确定、打开"},
-    {"number": 34, "name": "鱼", "symbol": "≈", "keyword": "流动、金钱、资源"},
-    {"number": 35, "name": "船锚", "symbol": "⚓", "keyword": "稳定、长期、落地"},
-    {"number": 36, "name": "十字架", "symbol": "✛", "keyword": "压力、课题、负担"},
+    {"number": 27, "name": "信", "symbol": "✉", "keyword": "消息、表达、文件"},
+    {"number": 28, "name": "男人", "symbol": "♂", "keyword": "男性、主动能量、当事人"},
+    {"number": 29, "name": "女人", "symbol": "♀", "keyword": "女性、感受、当事人"},
+    {"number": 30, "name": "百合", "symbol": "⚜", "keyword": "成熟、平静、时间"},
+    {"number": 31, "name": "太阳", "symbol": "☀", "keyword": "成功、清晰、活力"},
+    {"number": 32, "name": "月亮", "symbol": "☾", "keyword": "情绪、直觉、认可"},
+    {"number": 33, "name": "钥匙", "symbol": "⚿", "keyword": "答案、确定、开启"},
+    {"number": 34, "name": "鱼", "symbol": "≈", "keyword": "资源、流动、自由"},
+    {"number": 35, "name": "锚", "symbol": "⚓", "keyword": "稳定、坚持、停留"},
+    {"number": 36, "name": "十字架", "symbol": "✚", "keyword": "压力、课题、承担"},
 ]
 
-sessions = {}
+RELATIONSHIP_POSITIONS = [
+    "关系底色",
+    "表层表现",
+    "核心态度",
+    "深层心理",
+    "后续走向",
+]
 
 
 class SessionRequest(BaseModel):
@@ -67,86 +79,183 @@ class DrawRequest(BaseModel):
     positions: list[int]
 
 
+def clean_json(text: str) -> dict:
+    """兼容模型偶尔返回 Markdown 代码块的情况。"""
+    text = text.strip()
+
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1]
+        text = text.rsplit("```", 1)[0].strip()
+
+    return json.loads(text)
+
+
+def generate_interpretation(session: dict, cards: list[dict]) -> dict:
+    api_key = os.getenv("HUNYUAN_API_KEY")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="服务器尚未配置 HUNYUAN_API_KEY。",
+        )
+
+    card_lines = []
+    for index, card in enumerate(cards):
+        position_name = (
+            RELATIONSHIP_POSITIONS[index]
+            if session["topic"] == "感情" and index < len(RELATIONSHIP_POSITIONS)
+            else f"位置 {index + 1}"
+        )
+        card_lines.append(
+            f"{position_name}：{card['name']}（关键词：{card['keyword']}）"
+        )
+
+    system_prompt = """
+你是一位叫 Mira 的中文雷诺曼牌解读师。
+你的风格温和、具体、清晰，帮助用户理解当前关系或问题的趋势，
+但不把占卜说成绝对事实，也不做医疗、法律、财务等专业结论。
+
+请严格根据用户问题、主题、牌阵位置和抽到的雷诺曼牌进行解读。
+避免把雷诺曼牌称为塔罗牌；避免夸张恐吓、宿命论或保证结果。
+
+必须只返回一个可被程序读取的 JSON 对象，不能使用 Markdown，
+也不能在 JSON 前后添加任何解释。JSON 必须包含以下四个字段：
+{
+  "overall": "整体牌意，约 100～180 字",
+  "core": "指出最关键的关系动力或矛盾，约 80～140 字",
+  "advice": "给用户可执行、尊重边界的建议，约 80～140 字",
+  "conclusion": "简洁总结趋势与下一步，约 60～100 字"
+}
+""".strip()
+
+    user_prompt = f"""
+主题：{session["topic"]}
+用户问题：{session["question"]}
+
+本次牌阵：
+{chr(10).join(card_lines)}
+
+请生成本次完整解读。
+""".strip()
+
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.hunyuan.cloud.tencent.com/v1",
+        )
+
+        completion = client.chat.completions.create(
+            model="hunyuan-turbos-latest",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.7,
+        )
+
+        content = completion.choices[0].message.content or ""
+        interpretation = clean_json(content)
+
+        required_fields = ["overall", "core", "advice", "conclusion"]
+        if not all(interpretation.get(field) for field in required_fields):
+            raise ValueError("模型返回内容缺少必要字段。")
+
+        return interpretation
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"AI interpretation error: {error}")
+        raise HTTPException(
+            status_code=502,
+            detail="AI 解读暂时生成失败，请稍后重新抽牌。",
+        )
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
 @app.post("/api/sessions")
-def create_session(data: SessionRequest):
-    if not data.question.strip():
-        raise HTTPException(status_code=400, detail="请输入占卜问题")
+def create_session(payload: SessionRequest):
+    topic = payload.topic.strip()
+    question = payload.question.strip()
 
-    draw_count = 5 if data.topic == "感情" else 3
+    if not topic or not question:
+        raise HTTPException(status_code=400, detail="主题和问题不能为空。")
+
+    draw_count = 5 if topic == "感情" else 3
     session_id = secrets.token_urlsafe(16)
 
     sessions[session_id] = {
-        "topic": data.topic,
-        "question": data.question.strip(),
+        "topic": topic,
+        "question": question,
         "draw_count": draw_count,
-        "deck": None,
+        "shuffled_cards": [],
     }
 
     return {
         "session_id": session_id,
+        "topic": topic,
+        "question": question,
         "draw_count": draw_count,
-        "spread": "五张关系态度阵" if draw_count == 5 else "线性三张牌阵",
     }
 
 
 @app.post("/api/sessions/{session_id}/shuffle")
-def shuffle(session_id: str):
+def shuffle_cards(session_id: str):
     session = sessions.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="本次占卜不存在或已失效")
 
-    deck = list(range(1, 37))
-    random.SystemRandom().shuffle(deck)
-    session["deck"] = deck
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在或已失效，请重新开始。")
+
+    shuffled_cards = CARDS.copy()
+    rng.shuffle(shuffled_cards)
+    session["shuffled_cards"] = shuffled_cards
 
     return {
-        "message": "已洗牌",
-        "draw_count": session["draw_count"],
+        "session_id": session_id,
+        "message": "洗牌完成",
+        "card_count": len(shuffled_cards),
     }
 
 
 @app.post("/api/sessions/{session_id}/draw")
-def draw_cards(session_id: str, data: DrawRequest):
+def draw_cards(session_id: str, payload: DrawRequest):
     session = sessions.get(session_id)
+
     if not session:
-        raise HTTPException(status_code=404, detail="本次占卜不存在或已失效")
+        raise HTTPException(status_code=404, detail="会话不存在或已失效，请重新开始。")
 
-    if session["deck"] is None:
-        raise HTTPException(status_code=400, detail="请先洗牌")
+    if not session["shuffled_cards"]:
+        raise HTTPException(status_code=400, detail="请先完成洗牌。")
 
-    positions = data.positions
+    positions = payload.positions
 
     if len(positions) != session["draw_count"]:
         raise HTTPException(
             status_code=400,
-            detail=f"本次牌阵需要选择 {session['draw_count']} 个数字",
+            detail=f"本次需要选择 {session['draw_count']} 个数字。",
         )
 
     if len(set(positions)) != len(positions):
-        raise HTTPException(status_code=400, detail="数字不能重复")
+        raise HTTPException(status_code=400, detail="数字不能重复。")
 
     if any(position < 1 or position > 36 for position in positions):
-        raise HTTPException(status_code=400, detail="数字必须在 1 到 36 之间")
+        raise HTTPException(status_code=400, detail="数字必须在 1 到 36 之间。")
 
     cards = []
     for position in positions:
-        card_number = session["deck"][position - 1]
-        card = next(card for card in CARDS if card["number"] == card_number)
-        cards.append({**card, "draw_position": position})
+        card = session["shuffled_cards"][position - 1].copy()
+        card["draw_position"] = position
+        cards.append(card)
+
+    interpretation = generate_interpretation(session, cards)
 
     return {
         "question": session["question"],
         "topic": session["topic"],
         "cards": cards,
-        "interpretation": {
-            "overall": "这是当前测试阶段的模拟解读。正式版本会由你的雷诺曼 skill 根据问题、牌阵与真实牌面生成完整分析。",
-            "core": "牌阵已经由后端真实洗牌，并按照用户选择的位置翻开。",
-            "advice": "先观察牌面关键词与现实中的具体讯号，再决定下一步行动。",
-            "conclusion": "本次牌面呈现的是趋势和可参考的方向。",
-        },
+        "interpretation": interpretation,
     }
