@@ -6,7 +6,7 @@ app = FastAPI(title="Mira Lenormand API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://你的前端网站.onrender.com"
+        "https://hazelchen2000.github.io/mira-lenormand/.onrender.com"
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
